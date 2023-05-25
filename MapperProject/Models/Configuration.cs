@@ -7,6 +7,7 @@ public abstract class Configuration
 {
     public abstract Type DestType { get; }
     public abstract Type SourceType { get; }
+    public abstract IReadOnlyCollection<Configuration> NestedConfigurations { get; }
 }
 
 public class Configuration<TDest, TSource>
@@ -15,6 +16,9 @@ public class Configuration<TDest, TSource>
     where TDest : class
     where TSource : class
 {
+    private readonly List<Configuration> _nestedConfigurations;
+    public override IReadOnlyCollection<Configuration> NestedConfigurations => _nestedConfigurations.AsReadOnly();
+
     private readonly List<IPropertyBuilder> _propertyBuilders;
     public IReadOnlyCollection<IPropertyBuilder> PropertyBuilders => _propertyBuilders.AsReadOnly();
 
@@ -23,13 +27,15 @@ public class Configuration<TDest, TSource>
 
     public Configuration()
     {
+        _nestedConfigurations = new();
         _propertyBuilders = new();
         Configure(this);
     }
 
     public virtual void Configure(Configuration<TDest, TSource> config)
     {
-        throw new NotImplementedException();
+        _propertyBuilders.AddRange(config._propertyBuilders);
+        _nestedConfigurations.AddRange(config._nestedConfigurations);
     }
 
     public IPropertyBuilder<TDest, TSource, TProperty> Property<TProperty>(Expression<Func<TDest, TProperty>> propertyExpression)
@@ -47,34 +53,12 @@ public class Configuration<TDest, TSource>
                 $"for mapping from {GetTypeName<TDest>()} to {GetTypeName<TSource>()} already exists", nameof(propertyName));
         }
 
-        PropertyBuilder<TDest, TSource, TProperty> propertyBuilder = new(propertyName, false, null);
+        PropertyBuilder<TDest, TSource, TProperty> propertyBuilder = new(propertyName);
 
         _propertyBuilders.Add(propertyBuilder);
 
         return propertyBuilder;
     }
-
-    //public IPropertyBuilder<TDest, TSource, TProperty> NestedProperty<TProperty>(Expression<Func<TDest, TProperty>> propertyExpression)
-    //{
-    //    string propertyName = GetPropertyNameFromExpression(propertyExpression);
-
-    //    return NestedProperty<TProperty>(propertyName);
-    //}
-
-    //public IPropertyBuilder<TDest, TSource, TProperty> NestedProperty<TProperty>(string propertyName)
-    //{
-    //    if (IsBuilderExist<TProperty>(propertyName))
-    //    {
-    //        throw new ArgumentException($"Property builder for the property {propertyName} " +
-    //            $"for mapping from {GetTypeName<TDest>()} to {GetTypeName<TSource>()} already exists", nameof(propertyName));
-    //    }
-
-    //    PropertyBuilder<TDest, TSource, TProperty> propertyBuilder = new(propertyName, true, this.GetType().GenericTypeArguments[0]);
-
-    //    _propertyBuilders.Add(propertyBuilder);
-
-    //    return propertyBuilder;
-    //}
 
     private string GetPropertyNameFromExpression<TProperty>(Expression<Func<TDest, TProperty>> propertyExpression)
     {
@@ -96,5 +80,15 @@ public class Configuration<TDest, TSource>
     private string GetTypeName<T>()
     {
         return typeof(T).FullName ?? typeof(T).Name;
+    }
+
+    public void NestedProperty<TDestProperty, TSourceProperty>(Expression<Func<TDest, TDestProperty>> destPropertyExpression, Expression<Func<TSource, TSourceProperty>> sourcePropertyExpression, Action<Configuration<TDestProperty, TSourceProperty>> configAction)
+        where TDestProperty : class
+        where TSourceProperty : class
+    {
+        Configuration<TDestProperty, TSourceProperty> nestedConfig = new();
+
+        configAction(nestedConfig);
+        _nestedConfigurations.Add(nestedConfig);
     }
 }
