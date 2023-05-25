@@ -17,22 +17,11 @@ public class PropertyBuilder<TDest, TSource, TProperty>
 
     public bool IsIgnored { get; private set; }
 
-    public bool IsNested { get; private set; }
-    public Type? ParentType { get; private set; }
-
     public PropertyBuilder(
-        string name, 
-        bool isNested,
-        Type? parentType)
+        string name)
     {
         DestPropertyName = name;
         IsIgnored = false;
-        IsNested = isNested;
-
-        if (isNested && parentType is null)
-            throw new ArgumentException($"Parameter {nameof(parentType)} can't be null when property is nested");
-
-        ParentType = parentType;
     }
 
     public IPropertyBuilder<TDest, TSource, TProperty> HasField(string fieldName)
@@ -42,7 +31,7 @@ public class PropertyBuilder<TDest, TSource, TProperty>
         return this;
     }
 
-    public IPropertyBuilder<TDest, TSource, TProperty> MapFrom(Expression<Func<TSource, object>> propertyExpression)
+    public IPropertyBuilder<TDest, TSource, TProperty> MapFrom<TSourceProperty>(Expression<Func<TSource, TSourceProperty>> propertyExpression)
     {
         var expression = (MemberExpression)propertyExpression.Body;
         SourcePropertyName = expression.Member.Name;
