@@ -6,7 +6,7 @@ public class DomainModel
     public IReadOnlyCollection<string> Numbers => _numbers.AsReadOnly();
 
     public int Id { get; private set; }
-    //public PersonInfo PersonInfo { get; private set; }
+    public PersonInfo PersonInfo { get; private set; }
 
     public string Ignore { get; } = "Field for ignoring";
 
@@ -16,11 +16,11 @@ public class DomainModel
 
     public DomainModel(
         int id,
-        //PersonInfo personInfo,
+        PersonInfo personInfo,
         IEnumerable<string> numbers)
     {
         Id = id;
-        //PersonInfo = personInfo;
+        PersonInfo = personInfo;
         _numbers = numbers.ToList();
     }
 }

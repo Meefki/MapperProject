@@ -15,7 +15,10 @@ public class DtoToDomainConfiguration
         config.Property(dest => dest.Ignore)
             .Ignore();
 
-        //config.NestedProperty(dest => dest.PersonInfo).MapFrom(src => src)
-        //    .Property(dest => dest.PhoneNumber).MapFrom(src => src.Number);
+        config.NestedProperty(dest => dest.PersonInfo, source => source, config =>
+        {
+            config.Property(dest => dest.PhoneNumber)
+                .MapFrom(source => source.Number);
+        });
     }
 }
