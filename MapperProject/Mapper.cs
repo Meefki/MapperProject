@@ -1,4 +1,5 @@
-﻿using MapperProject.Abstractions;
+﻿using LanguageExt;
+using MapperProject.Abstractions;
 using MapperProject.Models;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -7,6 +8,9 @@ namespace MapperProject;
 
 public class Mapper : IMapper
 {
+    //private static readonly Func<PropertyInfo, Configuration, Predicate<Configuration>> isNestedConfigurationExist = (destProp, cfg) => c => c.DestType == destProp.PropertyType;
+    private static readonly Func<PropertyInfo, Configuration, bool> isNestedConfigurationExist = (pi, cfg) => pi.PropertyType == cfg.DestType;
+
     private readonly List<Configuration> _configurations;
 
     public Mapper()
@@ -35,74 +39,96 @@ public class Mapper : IMapper
         where TDest : class
         where TSource : class
     {
-        var configuration = GetConfiguration<TDest, TSource>(_configurations);
+        return (TDest)Map(source, typeof(TSource), typeof(TDest), dest);
+    }
 
-        var destConstructorInfo = GetConstructorInfo(configuration);
+    private object Map(
+        object source, 
+        Type sourceType, 
+        Type destType, 
+        object? dest = null,
+        IEnumerable<Configuration>? configurations = null)
+    {
+        var configuration = GetConfiguration(configurations ?? _configurations, destType, sourceType);
+
+        if (configuration is null)
+        {
+            throw new InvalidOperationException($"Cannot find a configuration for the destination type {destType.FullName ?? destType.Name} and " +
+                $"the source type {sourceType.FullName ?? sourceType.Name}");
+        }
+
+        var destConstructorInfo = GetParameterlessConstructorInfo(configuration);
 
         // Creating an instasce of the destination type
-        dest ??= (TDest)destConstructorInfo.Invoke(null);
+        dest ??= destConstructorInfo.Invoke(null);
 
         // Mapping processing
-        var destProperties = typeof(TDest).GetProperties();
+        var destProperties = destType.GetProperties();
 
         foreach (var prop in destProperties)
         {
-            bool isNestedConfigExist = configuration.NestedConfigurations.ToList().Exists(nc => nc.DestType == prop.PropertyType);
+            bool isNestedConfigExist = configuration.NestedConfigurations.ToList().Exists(nc => isNestedConfigurationExist(prop, nc)) ||
+                _configurations.Exists(c => isNestedConfigurationExist(prop, c));
 
             if (!isNestedConfigExist)
-                MapAsFlatProperty(dest, source, prop, configuration);
+                MapAsFlatProperty(dest, source, destType, sourceType, prop, configuration);
 
             if (isNestedConfigExist)
-                MapAsNestedProperty(dest, source, prop, configuration);
+                MapAsNestedProperty(dest, source, destType, sourceType, prop, configuration);
         }
 
         return dest;
     }
 
-    private static Configuration<TDest, TSource> GetConfiguration<TDest, TSource>(IEnumerable<Configuration> configurations)
-        where TDest : class
-        where TSource: class
+    private void MapAsNestedProperty(
+        object dest, 
+        object source,
+        Type destType,
+        Type sourceType,
+        PropertyInfo destProp, 
+        Configuration configuration)
     {
-        // Try to find a configuration for the types mapping
-        if (configurations.FirstOrDefault(c => c.DestType == typeof(TDest) &&
-                                           c.SourceType == typeof(TSource))
-            is not Configuration<TDest, TSource> configuration)
+        // get nested config
+        Configuration nestedConfig = configuration.NestedConfigurations.ToList().Find(nc => isNestedConfigurationExist(destProp, nc)) ?? 
+            _configurations.Find(c => isNestedConfigurationExist(destProp, c))!;
+
+        // get source property instance
+        object? sourcePropInstance = null;
+        if (sourceType == nestedConfig.SourceType)
+            sourcePropInstance = source;
+
+        if (sourcePropInstance is null)
         {
-            throw new InvalidOperationException($"Cannot find a configuration for the destination type {typeof(TDest).FullName ?? typeof(TDest).Name} and " +
-                $"the source type {typeof(TSource).FullName ?? typeof(TSource).Name}");
+            IPropertyBuilder? propertyBuilder = nestedConfig.PropertyBuilders.FirstOrDefault(pb => pb.PropertyType == nestedConfig.DestType);
+
+            if (propertyBuilder is null || string.IsNullOrWhiteSpace(propertyBuilder.SourcePropertyName))
+                throw new InvalidOperationException($"Coudn't find a builder for nested type mapping {nestedConfig.DestType.FullName ?? nestedConfig.DestType.Name}");
+
+            FieldInfo sourceFieldInfo = FindBackingField(propertyBuilder.SourcePropertyName!, sourceType);
+            sourcePropInstance = sourceFieldInfo.GetValue(source);
         }
 
-        return configuration;
+        // get dest property instance
+        var destPropInstance = destProp.GetValue(dest);
+        if (destPropInstance is null)
+        {
+            var constructorInfo = GetParameterlessConstructorInfo(nestedConfig);
+            destPropInstance = constructorInfo.Invoke(null);
+
+            FieldInfo destFieldInfo = FindBackingField(destProp.Name, destType);
+            destFieldInfo.SetValue(dest, destPropInstance);
+        }
+
+        Map(sourcePropInstance!, nestedConfig.SourceType, nestedConfig.DestType, destPropInstance, configuration.NestedConfigurations);
     }
 
-    private static ConstructorInfo GetConstructorInfo<TDest, TSource>(Configuration<TDest, TSource> configuration)
-        where TDest : class
-        where TSource : class
-    {
-        // Try to get a parameterless constructor from a type
-        ConstructorInfo constructorInfo = configuration.DestType.GetConstructor(
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, Type.EmptyTypes, null)
-            ?? throw new InvalidOperationException($"Couldn't reach the parameterless constructor of {configuration.DestType.FullName ?? configuration.DestType.Name} type");
-
-        return constructorInfo;
-    }
-
-    private static void MapAsNestedProperty<TDest, TSource>(TDest dest, TSource source, PropertyInfo prop, Configuration<TDest, TSource> configuration)
-        where TDest : class
-        where TSource : class
-    {
-        // TODO:
-        // 1. get nested config (we already know it is exist if we are here)
-        // 2. get dest property instance (prop) somehow...
-        // 3. get source property (or not then it gonna be easier) instance (at first by configuration.SourceType, at second by name I guess, but what the name will it be?) somehow...
-        // 4. call a main map method with the source and the dest objects as params
-        // 5. well done!
-    }
-
-    private static void MapAsFlatProperty<TDest, TSource>(TDest dest, TSource source, PropertyInfo prop, Configuration<TDest, TSource> configuration)
-        where TDest : class
-        where TSource : class
+    private static void MapAsFlatProperty(
+        object dest,
+        object source,
+        Type destType,
+        Type sourceType,
+        PropertyInfo prop, 
+        Configuration configuration)
     {
         // Finding builder for the current property and fill names of properties/fields
         var propertyBuilder = configuration.PropertyBuilders.FirstOrDefault(pb => pb.DestPropertyName == prop.Name);
@@ -126,32 +152,51 @@ public class Mapper : IMapper
         }
 
         // Finding a destination field by a property name
-        FieldInfo? destField = (string.IsNullOrWhiteSpace(destFieldName) || typeof(TDest).GetField(destFieldName) is null ?
-        FindBackingField<TDest>(destPropertyName) :
-        typeof(TDest).GetField(destFieldName)) ??
-        throw new ArgumentException($"Cannot find a field of property {destPropertyName} of {typeof(TDest).FullName ?? typeof(TDest).Name}");
+        FieldInfo? destField = (string.IsNullOrWhiteSpace(destFieldName) || destType.GetField(destFieldName) is null ?
+        FindBackingField(destPropertyName, destType) :
+        destType.GetField(destFieldName)) ??
+        throw new ArgumentException($"Cannot find a field of property {destPropertyName} of {destType.FullName ?? destType.Name}");
 
         // Finding a source field by a property name
-        FieldInfo? sourceField = (string.IsNullOrEmpty(sourceFieldName) || typeof(TSource).GetField(sourceFieldName) is null ?
-            FindBackingField<TSource>(sourcePropertyName) :
-            typeof(TSource).GetField(sourceFieldName)) ??
-            throw new ArgumentException($"Cannot find a field of property {sourceFieldName} of {typeof(TSource).FullName ?? typeof(TSource).Name}");
+        FieldInfo? sourceField = (string.IsNullOrEmpty(sourceFieldName) || sourceType.GetField(sourceFieldName) is null ?
+            FindBackingField(sourcePropertyName, sourceType) :
+            sourceType.GetField(sourceFieldName)) ??
+            throw new ArgumentException($"Cannot find a field of property {sourceFieldName} of {sourceType.FullName ?? sourceType.Name}");
 
         // Put value from a source object to a dest object
         var sourceValue = sourceField.GetValue(source);
         destField.SetValue(dest, sourceValue);
     }
 
-    private static FieldInfo FindBackingField<T>(string propertyName)
+    private static Configuration? GetConfiguration(IEnumerable<Configuration> configurations, Type destType, Type sourceType)
     {
-        FieldInfo? fieldInfo = GetField<T>(BackingFieldConvention.BackingFieldFormats.First(), propertyName);
+        // Try to find a configuration for the types mapping
+        Configuration? configuration = configurations.FirstOrDefault(c => c.DestType == destType && c.SourceType == sourceType);
+
+        return configuration;
+    }
+
+    private static ConstructorInfo GetParameterlessConstructorInfo(Configuration configuration)
+    {
+        // Try to get a parameterless constructor from a type
+        ConstructorInfo constructorInfo = configuration.DestType.GetConstructor(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, Type.EmptyTypes, null)
+            ?? throw new InvalidOperationException($"Couldn't reach the parameterless constructor of {configuration.DestType.FullName ?? configuration.DestType.Name} type");
+
+        return constructorInfo;
+    }
+
+    private static FieldInfo FindBackingField(string propertyName, Type propertyType)
+    {
+        FieldInfo? fieldInfo = GetField(BackingFieldConvention.BackingFieldFormats.First(), propertyName, propertyType);
 
         propertyName = PropertyNameToFieldName(propertyName);
         if (fieldInfo is null)
         {
             foreach (var backingPropertyNameFormat in BackingFieldConvention.FieldFormats)
             {
-                fieldInfo = GetField<T>(backingPropertyNameFormat, propertyName);
+                fieldInfo = GetField(backingPropertyNameFormat, propertyName, propertyType);
                 if (fieldInfo is not null)
                     break;
             }
@@ -163,11 +208,11 @@ public class Mapper : IMapper
         return fieldInfo!;
     }
 
-    private static FieldInfo? GetField<T>(string format, string value)
+    private static FieldInfo? GetField(string format, string value, Type type)
     {
         string fieldName = string.Format(format, value);
 
-        return typeof(T).GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        return type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
     }
 
     private static string PropertyNameToFieldName(string propertyName)

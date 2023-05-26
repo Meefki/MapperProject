@@ -1,5 +1,6 @@
 ﻿using MapperProject.Abstractions;
 using System.Linq.Expressions;
+using System.Reflection.Emit;
 
 namespace MapperProject.Models;
 
@@ -8,6 +9,7 @@ public abstract class Configuration
     public abstract Type DestType { get; }
     public abstract Type SourceType { get; }
     public abstract IReadOnlyCollection<Configuration> NestedConfigurations { get; }
+    public abstract IReadOnlyCollection<IPropertyBuilder> PropertyBuilders { get; }
 }
 
 public class Configuration<TDest, TSource>
@@ -20,7 +22,7 @@ public class Configuration<TDest, TSource>
     public override IReadOnlyCollection<Configuration> NestedConfigurations => _nestedConfigurations.AsReadOnly();
 
     private readonly List<IPropertyBuilder> _propertyBuilders;
-    public IReadOnlyCollection<IPropertyBuilder> PropertyBuilders => _propertyBuilders.AsReadOnly();
+    public override IReadOnlyCollection<IPropertyBuilder> PropertyBuilders => _propertyBuilders.AsReadOnly();
 
     public override Type DestType => typeof(TDest);
     public override Type SourceType => typeof(TSource);
@@ -36,6 +38,19 @@ public class Configuration<TDest, TSource>
     {
         _propertyBuilders.AddRange(config._propertyBuilders);
         _nestedConfigurations.AddRange(config._nestedConfigurations);
+    }
+
+    private void AddPropertyBuilder<D, S, TProperty>(PropertyBuilder<D, S, TProperty> propertyBuilder)
+    {
+        string propertyName = propertyBuilder.DestPropertyName;
+
+        if (IsBuilderExist<TProperty>(propertyName))
+        {
+            throw new ArgumentException($"Property builder for the property {propertyName} " +
+                $"for mapping from {GetTypeName<D>()} to {GetTypeName<S>()} already exists", nameof(propertyName));
+        }
+
+        _propertyBuilders.Add(propertyBuilder);
     }
 
     public IPropertyBuilder<TDest, TSource, TProperty> Property<TProperty>(Expression<Func<TDest, TProperty>> propertyExpression)
@@ -87,6 +102,20 @@ public class Configuration<TDest, TSource>
         where TSourceProperty : class
     {
         Configuration<TDestProperty, TSourceProperty> nestedConfig = new();
+
+        var destExpression = (MemberExpression)destPropertyExpression.Body;
+        var destPropertyName = destExpression.Member.Name;
+
+        var sourceExpression = sourcePropertyExpression.Body;
+        string? sourcePropertyName = sourceExpression.NodeType switch
+        {
+            ExpressionType.MemberAccess => ((MemberExpression)sourceExpression).Member.Name,
+            ExpressionType.Parameter => null,
+            _ => throw new ArgumentException($"Unsupported type of expression {nameof(sourcePropertyExpression)}")
+        };
+
+        PropertyBuilder<TDestProperty, TSourceProperty, TDestProperty> propertyBuilder = new(destPropertyName, sourcePropertyName);
+        nestedConfig.AddPropertyBuilder(propertyBuilder);
 
         configAction(nestedConfig);
         _nestedConfigurations.Add(nestedConfig);

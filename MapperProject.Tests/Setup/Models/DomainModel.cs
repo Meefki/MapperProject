@@ -8,7 +8,7 @@ public class DomainModel
     public int Id { get; private set; }
     public PersonInfo PersonInfo { get; private set; }
 
-    public string Ignore { get; } = "Field for ignoring";
+    public string? Ignore { get; set; }
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
     private DomainModel() { }

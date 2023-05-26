@@ -24,6 +24,14 @@ public class PropertyBuilder<TDest, TSource, TProperty>
         IsIgnored = false;
     }
 
+    internal PropertyBuilder(
+        string destPropName,
+        string? sourcePropName)
+        : this(destPropName)
+    {
+        SourcePropertyName = sourcePropName;
+    }
+
     public IPropertyBuilder<TDest, TSource, TProperty> HasField(string fieldName)
     {
         DestFieldName = fieldName;

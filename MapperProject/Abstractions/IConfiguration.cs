@@ -8,6 +8,7 @@ public interface IConfiguration<TDest, TSource>
     public Type DestType { get; }
     public Type SourceType { get; }
     public IReadOnlyCollection<Configuration> NestedConfigurations { get; }
+    public IReadOnlyCollection<IPropertyBuilder> PropertyBuilders { get; }
 
     public IPropertyBuilder<TDest, TSource, TProperty> Property<TProperty>(Expression<Func<TDest, TProperty>> propertyExpression);
     public IPropertyBuilder<TDest, TSource, TProperty> Property<TProperty>(string propertyName);
