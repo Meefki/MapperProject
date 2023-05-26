@@ -8,8 +8,11 @@ namespace MapperProject;
 
 public class Mapper : IMapper
 {
-    //private static readonly Func<PropertyInfo, Configuration, Predicate<Configuration>> isNestedConfigurationExist = (destProp, cfg) => c => c.DestType == destProp.PropertyType;
-    private static readonly Func<PropertyInfo, Configuration, bool> isNestedConfigurationExist = (pi, cfg) => pi.PropertyType == cfg.DestType;
+    private static readonly Func<PropertyInfo, Configuration, bool> isNestedConfiguration = 
+        (pi, cfg) => 
+            pi.PropertyType == cfg.DestType && 
+            cfg.PropertyBuilders
+                .Exists(pb => pb.DestPropertyName == pi.Name);
 
     private readonly List<Configuration> _configurations;
 
@@ -67,8 +70,7 @@ public class Mapper : IMapper
 
         foreach (var prop in destProperties)
         {
-            bool isNestedConfigExist = configuration.NestedConfigurations.ToList().Exists(nc => isNestedConfigurationExist(prop, nc)) ||
-                _configurations.Exists(c => isNestedConfigurationExist(prop, c));
+            bool isNestedConfigExist = configuration.NestedConfigurations.ToList().Exists(nc => isNestedConfiguration(prop, nc));
 
             if (!isNestedConfigExist)
                 MapAsFlatProperty(dest, source, destType, sourceType, prop, configuration);
@@ -89,8 +91,7 @@ public class Mapper : IMapper
         Configuration configuration)
     {
         // get nested config
-        Configuration nestedConfig = configuration.NestedConfigurations.ToList().Find(nc => isNestedConfigurationExist(destProp, nc)) ?? 
-            _configurations.Find(c => isNestedConfigurationExist(destProp, c))!;
+        Configuration nestedConfig = configuration.NestedConfigurations.ToList().Find(nc => isNestedConfiguration(destProp, nc))!;
 
         // get source property instance
         object? sourcePropInstance = null;
